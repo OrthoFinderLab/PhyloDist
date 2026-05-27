@@ -28,6 +28,49 @@ class TreeStructure:
     """
 
     @staticmethod
+    def _split_newick_statements(text: str) -> list[str]:
+        """
+        Split text into top-level Newick statements ending with semicolon.
+
+        Handles semicolons inside comments/quoted names safely enough for
+        normal tree-program output.
+        """
+        statements = []
+        start = 0
+        depth = 0
+        in_quote = False
+        in_comment = False
+
+        for i, ch in enumerate(text):
+            if in_comment:
+                if ch == "]":
+                    in_comment = False
+                continue
+
+            if ch == "[" and not in_quote:
+                in_comment = True
+                continue
+
+            if ch == "'":
+                in_quote = not in_quote
+                continue
+
+            if in_quote:
+                continue
+
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+            elif ch == ";" and depth == 0:
+                stmt = text[start:i + 1].strip()
+                if "(" in stmt and ")" in stmt:
+                    statements.append(stmt)
+                start = i + 1
+
+        return statements
+
+    @staticmethod
     def _extract_rooted_flag(text: str) -> tuple[str, Optional[bool]]:
         rooted = None
         stripped = text.lstrip()
@@ -136,23 +179,46 @@ class TreeStructure:
     @staticmethod
     def _clean_tree_text(text: str) -> str:
         """
-        Normalize tree text into one Newick string.
+        Normalize tree text into one clean Newick string.
+
+        Supports:
+            - plain Newick
+            - files containing multiple Newick trees
+            - NEXUS/tree assignment lines
+            - rootedness comments like [&R] / [&U]
         """
         text = text.strip().lstrip("\ufeff").strip()
 
-        # NEXUS detection.
+        # NEXUS: extract tree assignment contents.
         if text.lower().startswith("#nexus") or "begin trees" in text.lower():
-            match = re.search(r"=\s*(?:\[&[^\]]+\]\s*)?(.+?);", text, re.S | re.I)
-            if not match:
+            matches = re.findall(
+                r"=\s*(?:\[&[^\]]+\]\s*)?(.+?);",
+                text,
+                flags=re.S | re.I,
+            )
+            if not matches:
                 raise ValueError("Could not find tree in NEXUS content.")
-            text = match.group(1).strip()
 
-        # If non-NEXUS but contains tree assignment:
-        # tree xxx = [&R] (...);
-        elif "=" in text and "(" in text:
-            match = re.search(r"=\s*(?:\[&[^\]]+\]\s*)?(.+?);", text, re.S | re.I)
-            if match:
-                text = match.group(1).strip()
+            # Use the first tree by default.
+            text = matches[0].strip() + ";"
+
+        else:
+            # Remove leading labels before a tree assignment if present.
+            # Example: tree xxx = (...);
+            if "=" in text and "(" in text:
+                m = re.search(
+                    r"=\s*(?:\[&[^\]]+\]\s*)?(.+)",
+                    text,
+                    flags=re.S | re.I,
+                )
+                if m is not None:
+                    text = m.group(1).strip()
+
+            # Critical fix: if the file contains multiple Newick trees,
+            # keep only one complete statement.
+            statements = TreeStructure._split_newick_statements(text)
+            if statements:
+                text = statements[-1]
 
         # Remove rootedness annotation such as [&R] / [&U].
         text = re.sub(r"^\[&[^\]]+\]\s*", "", text)
