@@ -43,9 +43,20 @@ class PhyloDist:
         tree2: str,
         is_rooted: bool | None = None,
         parser: int | None = None,
+        taxon_mapper=None,
     ):
-        t1 = TreeStructure(tree1, is_rooted=is_rooted, parser=parser)
-        t2 = TreeStructure(tree2, is_rooted=is_rooted, parser=parser)
+        t1 = TreeStructure(
+            tree1,
+            is_rooted=is_rooted,
+            parser=parser,
+            taxon_mapper=taxon_mapper,
+        )
+        t2 = TreeStructure(
+            tree2,
+            is_rooted=is_rooted,
+            parser=parser,
+            taxon_mapper=taxon_mapper,
+        )
         return cls(t1, t2)
 
     def compare(
@@ -255,24 +266,41 @@ def parse_args(argv=None):
         help="Output full result as JSON"
     )
 
+    parser.add_argument(
+        "--taxon-mapper",
+        default=None,
+        help=(
+            "Optional taxon mapper file. Supports either "
+            "'pattern<TAB>replacement' or 'pattern: replacement'. "
+            "Used to map leaf names before comparison."
+        ),
+    )
+
     return parser.parse_args(argv)
 
 
 def main(argv=None):
     args = parse_args(argv)
 
+    mapper_rules = utils.read_taxon_mapper(args.taxon_mapper)
+
+    taxon_mapper = None
+    if mapper_rules is not None:
+        taxon_mapper = lambda name: utils.map_taxon_name(name, mapper_rules)
+
     t1 = TreeStructure(
         args.tree1,
         is_rooted=args.tree1_rooted,
         parser=args.parser,
+        taxon_mapper=taxon_mapper,
     )
 
     t2 = TreeStructure(
         args.tree2,
         is_rooted=args.tree2_rooted,
         parser=args.parser,
+        taxon_mapper=taxon_mapper,
     )
-
     grf = PhyloDist(t1, t2)
 
     result = grf.compare(
@@ -287,6 +315,7 @@ def main(argv=None):
         payload = {
             "tree1": args.tree1,
             "tree2": args.tree2,
+            "taxon_mapper": args.taxon_mapper,
             "method": args.method,
             "return_type": args.return_type,
             "normalise": args.normalise,

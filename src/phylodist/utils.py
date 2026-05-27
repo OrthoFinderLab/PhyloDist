@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+import re
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import FrozenSet, Iterable, List, Optional, Tuple, Hashable, Any
@@ -267,3 +269,122 @@ def serialize_result(result) -> dict[str, Any]:
         "unmatched2": [_part_to_jsonable(p) for p in result.unmatched2],
     }
 
+def read_taxon_mapper(mapper_file):
+    """
+    Read taxon-name mapping rules.
+
+    Supported formats
+    -----------------
+    TSV / whitespace:
+
+        pattern    replacement
+        Scer       Saccharomyces_cerevisiae
+
+    Colon format:
+
+        Scer: Saccharomyces_cerevisiae
+
+    Lines starting with # are ignored.
+    Optional headers are ignored.
+    """
+    if mapper_file is None:
+        return None
+
+    mapper_file = Path(mapper_file)
+
+    if not mapper_file.exists():
+        raise FileNotFoundError(f"Taxon mapper file does not exist: {mapper_file}")
+
+    rules = []
+
+    with open(mapper_file) as f:
+        for lineno, raw_line in enumerate(f, start=1):
+            line = raw_line.strip()
+
+            if not line or line.startswith("#"):
+                continue
+
+            line = line.split("#", 1)[0].strip()
+
+            if not line:
+                continue
+
+            lowered = line.lower()
+            if lowered in {
+                "pattern replacement",
+                "pattern\treplacement",
+                "from to",
+                "from\tto",
+                "source target",
+                "source\ttarget",
+            }:
+                continue
+
+            if ":" in line:
+                pattern, replacement = line.split(":", 1)
+                pattern = pattern.strip()
+                replacement = replacement.strip()
+            else:
+                parts = line.split()
+
+                if len(parts) != 2:
+                    raise ValueError(
+                        f"Invalid taxon mapper line {lineno} in {mapper_file}: "
+                        f"{raw_line.rstrip()!r}. Expected either "
+                        "'pattern<TAB>replacement' or 'pattern: replacement'."
+                    )
+
+                pattern, replacement = parts
+
+            if not pattern or not replacement:
+                raise ValueError(
+                    f"Invalid empty pattern/replacement on line {lineno} "
+                    f"in {mapper_file}: {raw_line.rstrip()!r}"
+                )
+
+            rules.append((pattern, replacement))
+
+    if not rules:
+        raise ValueError(f"No usable mapping rules found in {mapper_file}")
+
+    return rules
+
+
+def map_taxon_name(name, mapper_rules=None):
+    """
+    Map one leaf name to a shared taxon name.
+
+    Matching order
+    --------------
+    1. Exact full-name match.
+    2. Prefix before first underscore.
+       Example:
+           Scer_YAL001C -> Scer
+    3. Regex full match.
+    4. Otherwise return unchanged.
+    """
+    name = str(name)
+
+    if mapper_rules is None:
+        return name
+
+    prefix = name.split("_", 1)[0]
+
+    for pattern, replacement in mapper_rules:
+        if name == pattern:
+            return replacement
+
+    for pattern, replacement in mapper_rules:
+        if prefix == pattern:
+            return replacement
+
+    for pattern, replacement in mapper_rules:
+        try:
+            if re.fullmatch(pattern, name):
+                return replacement
+        except re.error as e:
+            raise ValueError(
+                f"Invalid regex pattern in taxon mapper: {pattern!r}"
+            ) from e
+
+    return name

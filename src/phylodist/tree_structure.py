@@ -89,20 +89,32 @@ class TreeStructure:
         source: str | Tree,
         is_rooted: Optional[bool] = None,
         parser: int | None = None,
+        taxon_mapper=None,
     ):
         self.source = source
         self.t = None
         self._fallback_root = None
         self._fallback_taxa: FrozenSet[Taxon] | None = None
+        self._taxon_mapper = taxon_mapper
 
         inferred_rooted = None
 
+        # ------------------------------------------------------------
+        # Case 1: source is already an ETE tree.
+        # ------------------------------------------------------------
         if isinstance(source, Tree):
             self.t = source.copy()
+            self._apply_taxon_mapper_to_ete_tree(taxon_mapper)
+
             self.taxa: FrozenSet[Taxon] = frozenset(self.t.leaf_names())
-            self.is_rooted: Optional[bool] = is_rooted
+            self.is_rooted: Optional[bool] = (
+                is_rooted if is_rooted is not None else inferred_rooted
+            )
             return
 
+        # ------------------------------------------------------------
+        # Case 2: source is file path / Newick / NEXUS text.
+        # ------------------------------------------------------------
         text = self._coerce_tree_text(source)
         text, inferred_rooted = self._extract_rooted_flag(text)
         text = self._clean_tree_text(text)
@@ -117,22 +129,35 @@ class TreeStructure:
 
             try:
                 self.t = Tree(text, parser=p)
+                self._apply_taxon_mapper_to_ete_tree(taxon_mapper)
+
                 self.taxa = frozenset(self.t.leaf_names())
-                self.is_rooted = is_rooted if is_rooted is not None else inferred_rooted
+                self.is_rooted = (
+                    is_rooted if is_rooted is not None else inferred_rooted
+                )
                 return
+
             except Exception as e:
                 ete_errors.append(f"ETE parser={p}: {e}")
 
         # ------------------------------------------------------------
-        # Fallback: parse topology directly.
-        # This avoids ETE4 choking on support labels / long branch lengths.
+        # Case 3: fallback topology-only parser.
         # ------------------------------------------------------------
         try:
             topology_text = self._to_topology_only_newick(text)
             self._fallback_root = self._parse_topology_newick(topology_text)
-            self._fallback_taxa = frozenset(self._collect_fallback_taxa(self._fallback_root))
+
+            self._fallback_taxa = frozenset(
+                self._collect_fallback_taxa(
+                    self._fallback_root,
+                    taxon_mapper=taxon_mapper,
+                )
+            )
+
             self.taxa = self._fallback_taxa
-            self.is_rooted = is_rooted if is_rooted is not None else inferred_rooted
+            self.is_rooted = (
+                is_rooted if is_rooted is not None else inferred_rooted
+            )
             return
 
         except Exception as e:
@@ -145,14 +170,59 @@ class TreeStructure:
             )
             raise ValueError(msg)
 
+    def _apply_taxon_mapper_to_ete_tree(self, taxon_mapper):
+        """
+        Rename leaf names in an ETE tree using the provided taxon_mapper.
+        """
+        if taxon_mapper is None:
+            return
+
+        if self.t is None:
+            return
+
+        for leaf in self.t:
+            if leaf.is_leaf:
+                leaf.name = taxon_mapper(leaf.name)
+
+    @staticmethod
+    def _collect_fallback_taxa(node, taxon_mapper=None) -> set[Taxon]:
+        """
+        Collect leaf names from the fallback parsed topology.
+
+        Applies taxon_mapper to fallback leaf names too, so ETE and fallback
+        parsing behave consistently.
+        """
+        if isinstance(node, str):
+            if taxon_mapper is not None:
+                return {taxon_mapper(node)}
+            return {node}
+
+        taxa = set()
+
+        for child in node:
+            taxa.update(
+                TreeStructure._collect_fallback_taxa(
+                    child,
+                    taxon_mapper=taxon_mapper,
+                )
+            )
+
+        return taxa
+
     @classmethod
     def from_newick(
         cls,
         newick: str,
         is_rooted: Optional[bool] = None,
         parser: int | None = None,
+        taxon_mapper=None,
     ) -> "TreeStructure":
-        return cls(newick, is_rooted=is_rooted, parser=parser)
+        return cls(
+            newick,
+            is_rooted=is_rooted,
+            parser=parser,
+            taxon_mapper=taxon_mapper,
+        )
 
     @classmethod
     def from_tree(
@@ -160,8 +230,14 @@ class TreeStructure:
         tree: Tree,
         is_rooted: Optional[bool] = None,
         parser: int | None = None,
+        taxon_mapper=None,
     ) -> "TreeStructure":
-        return cls(tree, is_rooted=is_rooted, parser=parser)
+        return cls(
+            tree,
+            is_rooted=is_rooted,
+            parser=parser,
+            taxon_mapper=taxon_mapper,
+        )
 
     @staticmethod
     def _coerce_tree_text(source) -> str:
@@ -199,7 +275,7 @@ class TreeStructure:
             if not matches:
                 raise ValueError("Could not find tree in NEXUS content.")
 
-            # Use the first tree by default.
+            # Use the first tree by default for NEXUS tree blocks.
             text = matches[0].strip() + ";"
 
         else:
@@ -214,10 +290,12 @@ class TreeStructure:
                 if m is not None:
                     text = m.group(1).strip()
 
-            # Critical fix: if the file contains multiple Newick trees,
-            # keep only one complete statement.
+            # If the file contains multiple Newick trees,
+            # keep one complete statement.
             statements = TreeStructure._split_newick_statements(text)
             if statements:
+                # Keep the last one because your yeast species-tree file stores
+                # a topology-only tree first and a branch-length tree second.
                 text = statements[-1]
 
         # Remove rootedness annotation such as [&R] / [&U].
@@ -339,33 +417,33 @@ class TreeStructure:
         root = parse_subtree()
 
         if i != n:
-            raise ValueError(f"Unexpected trailing text at position {i}: {text[i:i+50]!r}")
+            raise ValueError(
+                f"Unexpected trailing text at position {i}: {text[i:i + 50]!r}"
+            )
 
         return root
 
-    @staticmethod
-    def _collect_fallback_taxa(node) -> set[Taxon]:
-        if isinstance(node, str):
-            return {node}
-
-        taxa = set()
-        for child in node:
-            taxa.update(TreeStructure._collect_fallback_taxa(child))
-
-        return taxa
-
-    @staticmethod
-    def _fallback_internal_parts(node, *, include_root=False):
+    def _fallback_internal_parts(self, node, *, include_root=False):
         """
         Return descendant leaf sets for every internal node.
+
+        Applies taxon_mapper to fallback leaf names, so fallback clades/splits
+        use the same mapped taxon names as self.taxa.
         """
         out = []
+        taxon_mapper = getattr(self, "_taxon_mapper", None)
+
+        def map_leaf(x):
+            if taxon_mapper is not None:
+                return taxon_mapper(x)
+            return x
 
         def rec(x, is_root):
             if isinstance(x, str):
-                return frozenset([x])
+                return frozenset([map_leaf(x)])
 
             leaves = set()
+
             for child in x:
                 leaves.update(rec(child, False))
 
@@ -410,14 +488,18 @@ class TreeStructure:
 
     def copy(self) -> "TreeStructure":
         if self.t is not None:
-            return TreeStructure(self.t.copy(), is_rooted=self.is_rooted)
+            return TreeStructure(
+                self.t.copy(),
+                is_rooted=self.is_rooted,
+                taxon_mapper=self._taxon_mapper,
+            )
 
-        # Rebuild from fallback topology string is unnecessary for comparison use.
         new = object.__new__(TreeStructure)
         new.source = self.source
         new.t = None
         new._fallback_root = self._fallback_root
         new._fallback_taxa = self._fallback_taxa
+        new._taxon_mapper = self._taxon_mapper
         new.taxa = self.taxa
         new.is_rooted = self.is_rooted
         return new
@@ -443,7 +525,11 @@ class TreeStructure:
             return clades
 
         clades = []
-        for leaves in self._fallback_internal_parts(self._fallback_root, include_root=False):
+
+        for leaves in self._fallback_internal_parts(
+            self._fallback_root,
+            include_root=False,
+        ):
             if 1 < len(leaves) < self.n_taxa - 1:
                 clades.append(leaves)
 
@@ -455,12 +541,14 @@ class TreeStructure:
 
         if self.t is not None:
             splits: set[Part] = set()
+
             for node in self._iter_internal_nodes():
                 if node.is_root:
                     continue
 
                 leaves = frozenset(node.leaf_names())
                 canon = utils._canon_unrooted_split(leaves, self.taxa)
+
                 if canon is not None:
                     splits.add(canon)
 
@@ -468,8 +556,12 @@ class TreeStructure:
 
         splits: set[Part] = set()
 
-        for leaves in self._fallback_internal_parts(self._fallback_root, include_root=False):
+        for leaves in self._fallback_internal_parts(
+            self._fallback_root,
+            include_root=False,
+        ):
             canon = utils._canon_unrooted_split(leaves, self.taxa)
+
             if canon is not None:
                 splits.add(canon)
 
@@ -486,11 +578,13 @@ class TreeStructure:
 
         for p in parts:
             fp = utils._to_fset(p)
+
             canon = (
                 utils._canon_rooted_clade(fp, self.taxa)
-                if rooted else
-                utils._canon_unrooted_split(fp, self.taxa)
+                if rooted
+                else utils._canon_unrooted_split(fp, self.taxa)
             )
+
             if canon is not None and canon not in seen:
                 seen.add(canon)
                 out.append(canon)
@@ -514,11 +608,13 @@ class TreeStructure:
         for p in parts:
             p = utils._to_fset(p)
             q = p & shared_taxa
+
             canon = (
                 utils._canon_rooted_clade(q, shared_taxa)
-                if rooted else
-                utils._canon_unrooted_split(q, shared_taxa)
+                if rooted
+                else utils._canon_unrooted_split(q, shared_taxa)
             )
+
             if canon is not None and canon not in seen:
                 seen.add(canon)
                 projected.append(canon)
