@@ -95,6 +95,8 @@ class TreeStructure:
         self.t = None
         self._fallback_root = None
         self._fallback_taxa: FrozenSet[Taxon] | None = None
+
+        taxon_mapper = utils.resolve_taxon_mapper(taxon_mapper)
         self._taxon_mapper = taxon_mapper
 
         inferred_rooted = None

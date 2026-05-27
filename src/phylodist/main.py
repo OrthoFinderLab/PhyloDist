@@ -253,22 +253,6 @@ def parse_args(argv=None):
             "otherwise unrooted."
         ),
     )
-    # # Comparison mode
-    # compare_root_group = parser.add_mutually_exclusive_group()
-    # compare_root_group.add_argument(
-    #     "--compare-rooted",
-    #     dest="compare_rooted",
-    #     action="store_true",
-    #     help="Force rooted comparison"
-    # )
-    # compare_root_group.add_argument(
-    #     "--compare-unrooted",
-    #     dest="compare_rooted",
-    #     action="store_false",
-    #     help="Force unrooted comparison"
-    # )
-    # parser.set_defaults(compare_rooted=None)
-
 
     parser.add_argument(
         "--verbose",
@@ -303,25 +287,19 @@ def parse_args(argv=None):
 
 def main(argv=None):
     args = parse_args(argv)
-
-    mapper_rules = utils.read_taxon_mapper(args.taxon_mapper)
-
-    taxon_mapper = None
-    if mapper_rules is not None:
-        taxon_mapper = lambda name: utils.map_taxon_name(name, mapper_rules)
-
+    
     t1 = TreeStructure(
         args.tree1,
         is_rooted=args.tree1_rooted,
         parser=args.parser,
-        taxon_mapper=taxon_mapper,
+        taxon_mapper=args.taxon_mapper,
     )
 
     t2 = TreeStructure(
         args.tree2,
         is_rooted=args.tree2_rooted,
         parser=args.parser,
-        taxon_mapper=taxon_mapper,
+        taxon_mapper=args.taxon_mapper,
     )
     grf = PhyloDist(t1, t2)
 

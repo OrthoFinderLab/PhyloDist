@@ -104,6 +104,17 @@ result = grf.compare(
 print(result.score)
 ```
 
+For a distance-style example, use the distance alias `cid`:
+
+```python
+result = grf.compare(
+    method="cid",
+    rooted=False,
+    normalise=True,
+    return_type="distance",
+)
+```
+
 ---
 
 ## Rooted and Unrooted Comparisons
@@ -123,7 +134,7 @@ This matters because a rooted tree can be compared as an unrooted tree by ignori
 | `unrooted` | Compare unrooted splits | Recommended for most gene-tree comparisons |
 | `auto` | Use rooted only if both trees are explicitly rooted; otherwise use unrooted | Useful as a general CLI default |
 
-For gene-tree benchmarking, such as rooted species tree versus unrooted inferred gene trees, use unrooted comparison.
+For gene/species tree benchmarking, such as rooted species tree versus unrooted inferred gene trees, use unrooted comparison.
 
 ---
 
@@ -228,6 +239,74 @@ Scer
 Scer_YAL001C
 ```
 
+### Python usage with taxon mapping
+
+The `taxon_mapper` argument can be:
+
+- `None`
+- a mapper file path
+- a callable function
+- a list or tuple of `(pattern, replacement)` rules
+
+PhyloDist resolves mapper files internally, so downstream tools can pass the mapper file path directly:
+
+```python
+from phylodist import PhyloDist, Tree
+
+t1 = Tree(
+    "species_tree.tree",
+    is_rooted=True,
+    parser=None,
+    taxon_mapper="yeast_taxon_mapper.tsv",
+)
+
+t2 = Tree(
+    "gene_tree.tree",
+    is_rooted=False,
+    parser=None,
+    taxon_mapper="yeast_taxon_mapper.tsv",
+)
+
+grf = PhyloDist(t1, t2)
+
+result = grf.compare(
+    method="cid",
+    rooted=False,
+    normalise=True,
+    return_type="distance",
+)
+
+print(result.score)
+```
+
+You can also pass mapping rules directly:
+
+```python
+rules = [
+    ("Scer", "Saccharomyces_cerevisiae"),
+    ("Smik", "Saccharomyces_mikatae"),
+]
+
+t = Tree(
+    "gene_tree.tree",
+    taxon_mapper=rules,
+)
+```
+
+or use a custom callable:
+
+```python
+def mapper(name):
+    return name.split("_", 1)[0]
+
+t = Tree(
+    "gene_tree.tree",
+    taxon_mapper=mapper,
+)
+```
+
+Taxon mapping is applied while trees are loaded, before rooted clades or unrooted splits are extracted.
+
 ---
 
 ## Command Line Usage
@@ -238,7 +317,7 @@ PhyloDist can be run in several ways depending on how it is installed.
 
 ```bash
 phylodist tree1.txt tree2.txt \
-    --method mci \
+    --method cid \
     --tree1-unrooted \
     --tree2-unrooted \
     --compare-mode unrooted \
@@ -249,7 +328,7 @@ phylodist tree1.txt tree2.txt \
 
 ```bash
 python phylodist.py tree1.txt tree2.txt \
-    --method mci \
+    --method cid \
     --tree1-unrooted \
     --tree2-unrooted \
     --compare-mode unrooted \

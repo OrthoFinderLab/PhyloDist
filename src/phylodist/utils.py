@@ -269,34 +269,12 @@ def serialize_result(result) -> dict[str, Any]:
         "unmatched2": [_part_to_jsonable(p) for p in result.unmatched2],
     }
 
-from pathlib import Path
-import re
 
 
-def read_taxon_mapper(mapper_file):
-    """
-    Read taxon-name mapping rules.
 
-    Supported formats
-    -----------------
-    TSV / whitespace, with or without header:
-
-        pattern    replacement
-        Scer       Saccharomyces_cerevisiae
-
-        Scer       Saccharomyces_cerevisiae
-
-    Colon format, with or without header:
-
-        Scer: Saccharomyces_cerevisiae
-
-    Lines starting with # are ignored.
-    Inline comments after # are ignored.
-    """
-    if mapper_file is None:
-        return None
-
-    mapper_file = Path(mapper_file)
+@lru_cache(maxsize=32)
+def _read_taxon_mapper_cached(mapper_file_str):
+    mapper_file = Path(mapper_file_str)
 
     if not mapper_file.exists():
         raise FileNotFoundError(f"Taxon mapper file does not exist: {mapper_file}")
@@ -315,9 +293,6 @@ def read_taxon_mapper(mapper_file):
         for lineno, raw_line in enumerate(f, start=1):
             line = raw_line.strip()
 
-            if not line or line.startswith("#") or line.startswith("//"):
-                continue
-
             # Remove inline comments.
             line = line.split("#", 1)[0].strip()
             line = line.split("//", 1)[0].strip()
@@ -330,8 +305,6 @@ def read_taxon_mapper(mapper_file):
                 pattern = pattern.strip()
                 replacement = replacement.strip()
 
-                # Allow optional colon-style header:
-                # pattern: replacement
                 if (pattern.lower(), replacement.lower()) in header_pairs:
                     continue
 
@@ -348,7 +321,6 @@ def read_taxon_mapper(mapper_file):
 
                 pattern, replacement = parts[0].strip(), parts[1].strip()
 
-                # Optional whitespace/TSV header.
                 if (pattern.lower(), replacement.lower()) in header_pairs:
                     continue
 
@@ -363,20 +335,36 @@ def read_taxon_mapper(mapper_file):
     if not rules:
         raise ValueError(f"No usable mapping rules found in {mapper_file}")
 
-    return rules
+    return tuple(rules)
+
+
+def read_taxon_mapper(mapper_file):
+    """
+    Read taxon-name mapping rules from a mapper file.
+
+    Supports:
+        pattern replacement
+        pattern<TAB>replacement
+        pattern: replacement
+
+    Header is optional.
+    Comments using # or // are ignored.
+    """
+    if mapper_file is None:
+        return None
+
+    return list(_read_taxon_mapper_cached(str(mapper_file)))
+
 
 def map_taxon_name(name, mapper_rules=None):
     """
     Map one leaf name to a shared taxon name.
 
-    Matching order
-    --------------
-    1. Exact full-name match.
-    2. Prefix before first underscore.
-       Example:
-           Scer_YAL001C -> Scer
-    3. Regex full match.
-    4. Otherwise return unchanged.
+    Matching order:
+        1. exact full-name match
+        2. prefix before first underscore
+        3. regex full match
+        4. unchanged if no match
     """
     name = str(name)
 
@@ -403,3 +391,33 @@ def map_taxon_name(name, mapper_rules=None):
             ) from e
 
     return name
+
+
+def resolve_taxon_mapper(taxon_mapper=None):
+    """
+    Convert taxon_mapper into a callable mapper.
+
+    Accepts:
+        None
+        callable
+        mapper file path
+        list/tuple of (pattern, replacement) rules
+    """
+    if taxon_mapper is None:
+        return None
+
+    if callable(taxon_mapper):
+        return taxon_mapper
+
+    if isinstance(taxon_mapper, (str, Path)):
+        mapper_rules = read_taxon_mapper(taxon_mapper)
+        return lambda name: map_taxon_name(name, mapper_rules)
+
+    if isinstance(taxon_mapper, (list, tuple)):
+        mapper_rules = list(taxon_mapper)
+        return lambda name: map_taxon_name(name, mapper_rules)
+
+    raise TypeError(
+        "taxon_mapper must be None, a callable, a mapper file path, "
+        "or a list of (pattern, replacement) rules."
+    )
