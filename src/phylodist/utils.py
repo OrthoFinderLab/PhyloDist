@@ -269,23 +269,29 @@ def serialize_result(result) -> dict[str, Any]:
         "unmatched2": [_part_to_jsonable(p) for p in result.unmatched2],
     }
 
+from pathlib import Path
+import re
+
+
 def read_taxon_mapper(mapper_file):
     """
     Read taxon-name mapping rules.
 
     Supported formats
     -----------------
-    TSV / whitespace:
+    TSV / whitespace, with or without header:
 
         pattern    replacement
         Scer       Saccharomyces_cerevisiae
 
-    Colon format:
+        Scer       Saccharomyces_cerevisiae
+
+    Colon format, with or without header:
 
         Scer: Saccharomyces_cerevisiae
 
     Lines starting with # are ignored.
-    Optional headers are ignored.
+    Inline comments after # are ignored.
     """
     if mapper_file is None:
         return None
@@ -297,33 +303,38 @@ def read_taxon_mapper(mapper_file):
 
     rules = []
 
+    header_pairs = {
+        ("pattern", "replacement"),
+        ("from", "to"),
+        ("source", "target"),
+        ("old", "new"),
+        ("input", "output"),
+    }
+
     with open(mapper_file) as f:
         for lineno, raw_line in enumerate(f, start=1):
             line = raw_line.strip()
 
-            if not line or line.startswith("#"):
+            if not line or line.startswith("#") or line.startswith("//"):
                 continue
 
+            # Remove inline comments.
             line = line.split("#", 1)[0].strip()
+            line = line.split("//", 1)[0].strip()
 
             if not line:
-                continue
-
-            lowered = line.lower()
-            if lowered in {
-                "pattern replacement",
-                "pattern\treplacement",
-                "from to",
-                "from\tto",
-                "source target",
-                "source\ttarget",
-            }:
                 continue
 
             if ":" in line:
                 pattern, replacement = line.split(":", 1)
                 pattern = pattern.strip()
                 replacement = replacement.strip()
+
+                # Allow optional colon-style header:
+                # pattern: replacement
+                if (pattern.lower(), replacement.lower()) in header_pairs:
+                    continue
+
             else:
                 parts = line.split()
 
@@ -331,10 +342,15 @@ def read_taxon_mapper(mapper_file):
                     raise ValueError(
                         f"Invalid taxon mapper line {lineno} in {mapper_file}: "
                         f"{raw_line.rstrip()!r}. Expected either "
-                        "'pattern<TAB>replacement' or 'pattern: replacement'."
+                        "'pattern<TAB>replacement', 'pattern replacement', "
+                        "or 'pattern: replacement'."
                     )
 
-                pattern, replacement = parts
+                pattern, replacement = parts[0].strip(), parts[1].strip()
+
+                # Optional whitespace/TSV header.
+                if (pattern.lower(), replacement.lower()) in header_pairs:
+                    continue
 
             if not pattern or not replacement:
                 raise ValueError(
@@ -348,7 +364,6 @@ def read_taxon_mapper(mapper_file):
         raise ValueError(f"No usable mapping rules found in {mapper_file}")
 
     return rules
-
 
 def map_taxon_name(name, mapper_rules=None):
     """

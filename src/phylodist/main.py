@@ -109,21 +109,29 @@ class PhyloDist:
             raise TypeError("tree2 must be TreeStructure")
 
         if rooted is None:
-            if t1.is_rooted is None or t2.is_rooted is None:
-                raise ValueError(
-                    "Tree rootedness is unknown. "
-                    "Specify rooted=True or rooted=False."
-                )
+            # Auto mode:
+            # - if both are explicitly rooted, use rooted comparison
+            # - otherwise fall back to unrooted comparison
+            #
+            # This handles mixed rooted/unrooted inputs safely.
+            if t1.is_rooted is True and t2.is_rooted is True:
+                rooted = True
+            else:
+                rooted = False
 
-            if t1.is_rooted != t2.is_rooted:
-                raise ValueError(
-                    "Tree rootedness mismatch: "
-                    f"tree1 is rooted={t1.is_rooted}, "
-                    f"tree2 is rooted={t2.is_rooted}. "
-                    "Specify rooted=True or rooted=False."
-                )
-            
-            rooted = t1.is_rooted
+        else:
+            rooted = bool(rooted)
+
+            # Rooted comparison is only valid if both trees are rooted.
+            # Unrooted comparison is valid for rooted, unrooted, or unknown trees.
+            if rooted:
+                if t1.is_rooted is False or t2.is_rooted is False:
+                    raise ValueError(
+                        "Cannot perform rooted comparison when one input tree "
+                        "is marked unrooted. Use --compare-unrooted instead, "
+                        "or provide rooted versions of both trees."
+                    )
+                
 
         comparator = TreeComparator.from_tree_structures(
             t1,
@@ -232,21 +240,35 @@ def parse_args(argv=None):
     )
     parser.set_defaults(tree2_rooted=None)
 
-    # Comparison mode
-    compare_root_group = parser.add_mutually_exclusive_group()
-    compare_root_group.add_argument(
-        "--compare-rooted",
-        dest="compare_rooted",
-        action="store_true",
-        help="Force rooted comparison"
+
+    parser.add_argument(
+        "--compare-mode",
+        choices=["auto", "rooted", "unrooted"],
+        default="auto",
+        help=(
+            "Tree comparison mode. "
+            "'rooted' compares rooted clades; "
+            "'unrooted' compares unrooted splits; "
+            "'auto' uses rooted only if both trees are explicitly rooted, "
+            "otherwise unrooted."
+        ),
     )
-    compare_root_group.add_argument(
-        "--compare-unrooted",
-        dest="compare_rooted",
-        action="store_false",
-        help="Force unrooted comparison"
-    )
-    parser.set_defaults(compare_rooted=None)
+    # # Comparison mode
+    # compare_root_group = parser.add_mutually_exclusive_group()
+    # compare_root_group.add_argument(
+    #     "--compare-rooted",
+    #     dest="compare_rooted",
+    #     action="store_true",
+    #     help="Force rooted comparison"
+    # )
+    # compare_root_group.add_argument(
+    #     "--compare-unrooted",
+    #     dest="compare_rooted",
+    #     action="store_false",
+    #     help="Force unrooted comparison"
+    # )
+    # parser.set_defaults(compare_rooted=None)
+
 
     parser.add_argument(
         "--verbose",
@@ -303,9 +325,15 @@ def main(argv=None):
     )
     grf = PhyloDist(t1, t2)
 
+    compare_rooted = {
+        "auto": None,
+        "rooted": True,
+        "unrooted": False,
+    }[args.compare_mode]
+
     result = grf.compare(
         method=args.method,
-        rooted=args.compare_rooted,
+        rooted=compare_rooted,
         normalise=args.normalise,
         return_type=args.return_type,
         k=args.k,
@@ -322,7 +350,8 @@ def main(argv=None):
             "k": args.k,
             "tree1_rooted": args.tree1_rooted,
             "tree2_rooted": args.tree2_rooted,
-            "compare_rooted": args.compare_rooted,
+            "compare_mode": args.compare_mode,
+            "compare_rooted": compare_rooted,
             "result": utils.serialize_result(result),
         }
         print(json.dumps(payload, indent=2))
@@ -337,7 +366,7 @@ def main(argv=None):
         print(f"k: {args.k}")
         print(f"tree1_rooted: {args.tree1_rooted}")
         print(f"tree2_rooted: {args.tree2_rooted}")
-        print(f"compare_rooted: {args.compare_rooted}")
+        print(f"compare_rooted: {compare_rooted}")
         print(f"shared_taxa: {len(result.shared_taxa)}")
         print(f"matched_pairs: {len(result.matched_pairs)}")
         print(f"unmatched1: {len(result.unmatched1)}")

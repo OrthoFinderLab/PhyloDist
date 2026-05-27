@@ -121,7 +121,7 @@ class TreeStructure:
 
         ete_errors = []
 
-        parsers = [parser] if parser is not None else [1, 0, 2, 3]
+        parsers = [parser] if parser is not None else [1, 4, 0, 2, 3]
 
         for p in parsers:
             if p is None:
@@ -485,6 +485,12 @@ class TreeStructure:
 
     def get_tree_taxa(self) -> FrozenSet[Taxon]:
         return self.taxa
+    
+    def unroot(self) -> "TreeStructure":
+        if self.t is not None:
+            self.t.unroot()
+        self.is_rooted = False
+        return self
 
     def copy(self) -> "TreeStructure":
         if self.t is not None:
@@ -536,8 +542,11 @@ class TreeStructure:
         return clades
 
     def get_unrooted_splits(self) -> List[Part]:
-        if self.is_rooted is True:
-            raise ValueError("Cannot extract unrooted splits from a tree marked rooted.")
+        """
+        Extract unrooted splits.
+
+        A rooted tree can be compared as unrooted by ignoring root direction.
+        """
 
         if self.t is not None:
             splits: set[Part] = set()

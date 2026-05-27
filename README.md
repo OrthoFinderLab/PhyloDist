@@ -5,9 +5,11 @@
 The library is designed to:
 
 - Reproduce results from **TreeDist (R)**
-- Support both **rooted** and **unrooted** trees
+- Support both **rooted** and **unrooted** tree comparisons
+- Compare rooted trees as unrooted trees when requested, by ignoring the root direction
 - Provide both **distance** and **similarity** measures
 - Support **normalised scores in [0,1]**
+- Support optional taxon-name mapping before comparison
 - Provide a clean and extensible Python interface
 - Enable validation against published phylogenetic metrics
 
@@ -21,7 +23,7 @@ Supported comparison methods:
 |--------|-------------|-------------|--------------------------|
 | `rf` | Robinson–Foulds distance | Distance | `RobinsonFoulds(tree1, tree2, normalise = FALSE)` |
 | `jrf` | Jaccard Robinson–Foulds distance | Distance | `JaccardRobinsonFoulds(tree1, tree2, normalise = FALSE)` |
-| `icrf` | Information-corrected RF | Similarity (TreeDist-equivalent distance also available) | `InfoRobinsonFoulds(tree1, tree2, normalise = FALSE)` |
+| `icrf` | Information-corrected RF | Similarity or TreeDist-equivalent distance | `InfoRobinsonFoulds(tree1, tree2, normalise = FALSE)` |
 | `nye` | Nye similarity | Similarity | `NyeSimilarity(tree1, tree2, normalise = FALSE)` |
 | `msi` | Matching Split Information | Similarity | `MatchingSplitInfo(tree1, tree2, normalise = FALSE)` |
 | `msid` | Matching Split Information Distance | Distance | `MatchingSplitInfoDistance(tree1, tree2, normalise = FALSE)` |
@@ -29,6 +31,14 @@ Supported comparison methods:
 | `pid` | Phylogenetic Information Distance | Distance | `PhylogeneticInfoDistance(tree1, tree2, normalise = FALSE)` |
 | `mci` | Mutual Clustering Information | Similarity | `MutualClusteringInfo(tree1, tree2, normalise = FALSE)` |
 | `cid` | Clustering Information Distance | Distance | `ClusteringInfoDist(tree1, tree2, normalise = FALSE)` |
+
+Additional support:
+
+- Plain Newick strings or tree files
+- NEXUS-style tree blocks
+- Files containing multiple Newick trees; one complete tree is selected before parsing
+- ETE4 parsing with fallback topology-only parsing for difficult Newick annotations
+- Optional taxon mapping, useful when gene-tree leaves and species-tree leaves use different naming conventions
 
 ---
 
@@ -55,146 +65,301 @@ pip install .
 - scipy
 - ete4
 
-## Basic Usage
+---
+
+## Basic Python Usage
+
 ```python
 from phylodist import PhyloDist, Tree
 
-# Trees must be valid Newick strings or file paths.
+# Trees may be Newick strings or file paths.
 tree1 = "tree1.txt"
 tree2 = "tree2.txt"
-# or 
+
+# Or:
 # tree1 = "((A,B),(C,D));"
 # tree2 = "((A,C),(B,D));"
 
-# Create tree objects
 t1 = Tree(
     tree1,
-    is_rooted=False,   # Set rootedness here
-    parser=1           # Parser value follows ete4 conventions
+    is_rooted=False,
+    parser=1,
 )
 
 t2 = Tree(
     tree2,
     is_rooted=False,
-    parser=1
+    parser=1,
 )
 
-# Create PhyloDist object
 grf = PhyloDist(t1, t2)
 
-# Compare trees
 result = grf.compare(
     method="mci",
-    rooted=False,     # Force comparison mode
-    normalise=True    # Scale result to [0,1]
+    rooted=False,      # False = unrooted split comparison
+    normalise=True,    # Scale result to [0,1]
+    return_type="similarity",
 )
 
 print(result.score)
 ```
 
+---
+
+## Rooted and Unrooted Comparisons
+
+PhyloDist separates two concepts:
+
+1. **Tree rootedness metadata**: whether each input tree is marked as rooted or unrooted.
+2. **Comparison mode**: whether PhyloDist compares rooted clades or unrooted splits.
+
+This matters because a rooted tree can be compared as an unrooted tree by ignoring the root direction, but an unrooted tree cannot safely be compared as rooted without a biologically meaningful root.
+
+### Comparison modes
+
+| Mode | Meaning | Recommended use |
+|------|---------|-----------------|
+| `rooted` | Compare rooted clades | Only when both trees are rooted using comparable biological rooting |
+| `unrooted` | Compare unrooted splits | Recommended for most gene-tree comparisons |
+| `auto` | Use rooted only if both trees are explicitly rooted; otherwise use unrooted | Useful as a general CLI default |
+
+For gene-tree benchmarking, such as rooted species tree versus unrooted inferred gene trees, use unrooted comparison.
+
+---
+
+## Taxon Mapping
+
+PhyloDist can optionally map leaf names before comparison. This is useful when two trees use different naming conventions for the same taxa.
+
+For example, a species tree may use full species names:
+
+```text
+Saccharomyces_cerevisiae
+```
+
+while a gene tree may use sequence names or species-code prefixes:
+
+```text
+Scer_YAL001C
+```
+
+With a taxon mapper, `Scer_YAL001C` can be mapped to:
+
+```text
+Saccharomyces_cerevisiae
+```
+
+before tree comparison.
+
+### Supported mapper formats
+
+PhyloDist accepts either whitespace/TSV format:
+
+```text
+pattern replacement
+Scer    Saccharomyces_cerevisiae
+Smik    Saccharomyces_mikatae
+Skud    Saccharomyces_kudriavzevii
+```
+
+or colon format:
+
+```text
+Scer: Saccharomyces_cerevisiae
+Smik: Saccharomyces_mikatae
+Skud: Saccharomyces_kudriavzevii
+```
+
+The header is optional. These are also valid:
+
+```text
+Scer    Saccharomyces_cerevisiae
+Smik    Saccharomyces_mikatae
+Skud    Saccharomyces_kudriavzevii
+```
+
+```text
+Scer: Saccharomyces_cerevisiae
+Smik: Saccharomyces_mikatae
+Skud: Saccharomyces_kudriavzevii
+```
+
+### Comments
+
+Empty lines are ignored. Lines starting with `#` or `//` are ignored. Inline comments after `#` or `//` are also ignored:
+
+```text
+# Yeast taxon mapper
+// Short code to full species name
+
+Scer: Saccharomyces_cerevisiae  # budding yeast
+Smik: Saccharomyces_mikatae     // mapped from gene-tree prefix
+```
+
+Optional headers such as the following are ignored:
+
+```text
+pattern replacement
+from to
+source target
+old new
+input output
+```
+
+### Matching behaviour
+
+For each leaf name, PhyloDist tries mapping rules in this order:
+
+1. exact full-name match;
+2. prefix before the first underscore;
+3. regular-expression full match;
+4. unchanged name if no rule matches.
+
+For example, with this mapper:
+
+```text
+Scer: Saccharomyces_cerevisiae
+```
+
+both of these leaves map to `Saccharomyces_cerevisiae`:
+
+```text
+Scer
+Scer_YAL001C
+```
+
+---
+
 ## Command Line Usage
 
 PhyloDist can be run in several ways depending on how it is installed.
 
----
+### Method 1 - Installed command line tool
 
-#### Method 1 - Installed Command Line Tool
-After installation, you can run:
 ```bash
 phylodist tree1.txt tree2.txt \
     --method mci \
     --tree1-unrooted \
     --tree2-unrooted \
-    --compare-unrooted \
+    --compare-mode unrooted \
     --normalise
 ```
-#### Method 2 - Run Using the Standalone Script
-After downloading the repo locally, you can run:
+
+### Method 2 - Run using the standalone script
+
 ```bash
-python phylodist.py tree1.txt tree2.txt\
+python phylodist.py tree1.txt tree2.txt \
     --method mci \
     --tree1-unrooted \
     --tree2-unrooted \
-    --compare-unrooted \
+    --compare-mode unrooted \
     --normalise
 ```
 
-### Command Line Options
-- Required Arguments
+### Example with taxon mapping
 
-| Argument | Description                       |
-| -------- | --------------------------------- |
-| `tree1`  | First tree file or Newick string  |
-| `tree2`  | Second tree file or Newick string |
+```bash
+phylodist species_tree.tree gene_tree.tree \
+    --method cid \
+    --tree1-rooted \
+    --tree2-unrooted \
+    --compare-mode unrooted \
+    --taxon-mapper yeast_taxon_mapper.tsv \
+    --normalise
+```
 
-- General Options
+### Example using auto mode
 
-| Option          | Type   | Default    | Description                        |
-| --------------- | ------ | ---------- | ---------------------------------- |
-| `--method`      | string | `rf`       | Comparison method                  |
-| `--normalise`   | flag   | `False`    | Return normalised score in `[0,1]` |
-| `--return-type` | string | `distance` | Return `distance` or `similarity`  |
-| `--k`           | float  | `1.0`      | Exponent parameter for JRF         |
-| `--parser`      | int    | `1`        | ETE parser format                  |
+```bash
+phylodist tree1.txt tree2.txt \
+    --method rf \
+    --compare-mode auto
+```
 
-- Rootedness Options
+In `auto` mode, PhyloDist uses rooted comparison only when both trees are explicitly marked rooted. Otherwise, it uses unrooted comparison.
 
-| Option               | Description               |
-| -------------------- | ------------------------- |
-| `--tree1-rooted`     | Mark tree1 as rooted      |
-| `--tree1-unrooted`   | Mark tree1 as unrooted    |
-| `--tree2-rooted`     | Mark tree2 as rooted      |
-| `--tree2-unrooted`   | Mark tree2 as unrooted    |
-| `--compare-rooted`   | Force rooted comparison   |
-| `--compare-unrooted` | Force unrooted comparison |
+---
 
-- Output Options
+## Command Line Options
 
-| Option             | Description                       |
-| ------------------ | --------------------------------- |
-| `--verbose`        | Print diagnostic information      |
+### Required Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `tree1` | First tree file or Newick string |
+| `tree2` | Second tree file or Newick string |
+
+### General Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `--method` | string | `rf` | Comparison method |
+| `--normalise` | flag | `False` | Return normalised score in `[0,1]` |
+| `--return-type` | string | `distance` | Return `distance` or `similarity` |
+| `--k` | float | `1.0` | Exponent parameter for JRF |
+| `--parser` | int | `1` | ETE parser format |
+| `--taxon-mapper` | path | `None` | Optional taxon mapper file |
+
+### Rootedness and Comparison Mode Options
+
+| Option | Description |
+|--------|-------------|
+| `--tree1-rooted` | Mark tree1 as rooted |
+| `--tree1-unrooted` | Mark tree1 as unrooted |
+| `--tree2-rooted` | Mark tree2 as rooted |
+| `--tree2-unrooted` | Mark tree2 as unrooted |
+| `--compare-mode auto` | Use rooted comparison only if both trees are explicitly rooted; otherwise unrooted |
+| `--compare-mode rooted` | Force rooted clade comparison |
+| `--compare-mode unrooted` | Force unrooted split comparison |
+
+### Output Options
+
+| Option | Description |
+|--------|-------------|
+| `--verbose` | Print diagnostic information |
 | `--print-matching` | Display matched split/clade pairs |
-| `--json`           | Output full result as JSON        |
-- Available Methods
+| `--json` | Output full result as JSON |
 
-| Method | Description                         | Output                 |
-| ------ | ----------------------------------- | ---------------------- |
-| `rf`   | Robinson–Foulds                     | Distance               |
-| `jrf`  | Jaccard Robinson–Foulds             | Distance               |
-| `icrf` | Information-corrected RF            | Similarity or Distance |
-| `nye`  | Nye similarity                      | Similarity             |
-| `msi`  | Matching Split Information          | Similarity             |
-| `msid` | Matching Split Information Distance | Distance               |
-| `spi`  | Shared Phylogenetic Information     | Similarity             |
-| `pid`  | Phylogenetic Information Distance   | Distance               |
-| `mci`  | Mutual Clustering Information       | Similarity             |
-| `cid`  | Clustering Information Distance     | Distance               |
+### Available Methods
 
-- Get Help
+| Method | Description | Output |
+|--------|-------------|--------|
+| `rf` | Robinson–Foulds | Distance |
+| `jrf` | Jaccard Robinson–Foulds | Distance |
+| `icrf` | Information-corrected RF | Similarity or Distance |
+| `nye` | Nye similarity | Similarity |
+| `msi` | Matching Split Information | Similarity |
+| `msid` | Matching Split Information Distance | Distance |
+| `spi` | Shared Phylogenetic Information | Similarity |
+| `pid` | Phylogenetic Information Distance | Distance |
+| `mci` | Mutual Clustering Information | Similarity |
+| `cid` | Clustering Information Distance | Distance |
+
+### Get Help
+
 ```bash
 phylodist --help
 ```
 
+---
 
 ## Scalability Notes
 
 Unlike **TreeDist (R)**, which is often used on trees of approximately **≤1000 leaves** in practice, **PhyloDist** does not impose a fixed upper limit on tree size.
 
-However, many tree comparison methods implemented here rely on bipartite matching algorithms (Hungarian algorithm), whose computational complexity grows rapidly with tree size.
+However, many tree comparison methods implemented here rely on bipartite matching algorithms such as the Hungarian algorithm, whose computational complexity grows rapidly with tree size.
 
 Typical complexity:
 
 | Component | Complexity |
 |----------|-------------|
 | Split comparison | O(n²) |
-| Matching (Hungarian algorithm) | O(n³) |
+| Matching, Hungarian algorithm | O(n³) |
 | Memory usage | O(n²) |
 
 Where:
 
-- `n` = number of splits (roughly proportional to number of leaves)
-
----
+- `n` = number of splits, roughly proportional to number of leaves
 
 ### Practical Recommendations
 
@@ -212,16 +377,9 @@ Performance depends strongly on:
 - chosen metric
 - available system memory
 
+Large trees are supported, but runtime may increase substantially. Users working with large phylogenies are encouraged to test on smaller subsets first, monitor memory usage, and consider parallel workflows for batch comparisons.
+
 ---
-
-### Important Note
-
-Large trees are supported, but runtime may increase substantially.  
-Users working with large phylogenies are encouraged to:
-
-- test on smaller subsets first
-- monitor memory usage
-- consider parallel workflows for batch comparisons
 
 ## Important Interpretation Notes
 
@@ -229,17 +387,21 @@ Many tree comparison metrics implemented here are information-based. For these m
 
 - Similarity values increase as trees become more similar.
 - Distance values increase as trees become more different.
-- Raw information-based scores (similarity and distance) depend on tree size.
+- Raw information-based scores depend on tree size.
 - These values should not be compared across datasets without normalization.
 - Use `normalise=True` when comparing trees of different sizes.
 
 Metrics especially affected include:
 
-- icrf
-- msi / msid
-- spi / pid
-- mci / cid
+- `icrf`
+- `msi` / `msid`
+- `spi` / `pid`
+- `mci` / `cid`
 
+Rooted and unrooted comparisons are not interchangeable. Rooted mode compares rooted clades, while unrooted mode compares unrooted splits. Use rooted mode only when the input trees have comparable biological rooting.
+
+---
 
 ## Reference
+
 - Martin R Smith, Information theoretic generalized Robinson–Foulds metrics for comparing phylogenetic trees, Bioinformatics, Volume 36, Issue 20, October 2020, Pages 5007–5013, [![DOI](https://img.shields.io/badge/DOI-10.1093%2Fbioinformatics%2Fbtaa614-blue)](https://doi.org/10.1093/bioinformatics/btaa614)
