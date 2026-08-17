@@ -29,6 +29,7 @@ DISTANCE_ONLY_METHODS = frozenset({
     "rf",
     "jrf",
     "jrf_bocker",
+    "frobenius",
 })
 
 SIMILARITY_ONLY_METHODS = frozenset({
@@ -53,6 +54,7 @@ VALID_RETURN_TYPES = frozenset({"similarity", "distance"})
 VALID_METHODS = frozenset({
     "rf", "jrf",
     "jrf_bocker",
+    "frobenius",
     "icrf", "nye",
     "msi", "msid",
     "spi", "pid",
@@ -63,6 +65,7 @@ METHOD_SPECS = {
     "rf": {"base": "rf", "fixed_return_type": "distance"},
     "jrf": {"base": "jrf", "fixed_return_type": "distance"},
     "jrf_bocker": {"base": "jrf_bocker", "fixed_return_type": "distance"},
+    "frobenius": {"base": "frobenius", "fixed_return_type": "distance"},
 
     "icrf": {"base": "icrf", "fixed_return_type": None},
     "nye": {"base": "nye", "fixed_return_type": "similarity"},

@@ -31,6 +31,7 @@ Supported comparison methods:
 | `pid` | Phylogenetic Information Distance | Distance | `PhylogeneticInfoDistance(tree1, tree2, normalise = FALSE)` |
 | `mci` | Mutual Clustering Information | Similarity | `MutualClusteringInfo(tree1, tree2, normalise = FALSE)` |
 | `cid` | Clustering Information Distance | Distance | `ClusteringInfoDist(tree1, tree2, normalise = FALSE)` |
+| `frobenius` | Frobenius distance between leaf path-length matrices | Distance | — |
 
 Additional support:
 
@@ -39,6 +40,27 @@ Additional support:
 - Files containing multiple Newick trees; one complete tree is selected before parsing
 - ETE4 parsing with fallback topology-only parsing for difficult Newick annotations
 - Optional taxon mapping, useful when gene-tree leaves and species-tree leaves use different naming conventions
+
+### Branch-length distance
+
+Frobenius distance compares the patristic (leaf-to-leaf path-length) matrices,
+so it captures both topology and branch-length differences. Each unordered
+leaf pair is counted once. The trees must have exactly the same uniquely named
+leaves and must retain branch lengths through ETE4 parsing.
+
+```python
+comparison = PhyloDist.from_newick(tree1, tree2, parser=1)
+
+raw = comparison.compare(method="frobenius").score
+relative = comparison.compare(
+    method="frobenius",
+    frobenius_type="relative",
+).score
+```
+
+The relative value is `raw / ||D2||`, so tree 2 is the reference and reversing
+the trees can change the result. This option is separate from `normalise`
+because a relative Frobenius distance is not restricted to `[0, 1]`.
 
 ---
 
@@ -376,6 +398,7 @@ In `auto` mode, PhyloDist uses rooted comparison only when both trees are explic
 | `--normalise` | flag | `False` | Return normalised score in `[0,1]` |
 | `--return-type` | string | `distance` | Return `distance` or `similarity` |
 | `--k` | float | `1.0` | Exponent parameter for JRF |
+| `--frobenius-type` | string | `raw` | Return `raw` or tree-2-relative Frobenius distance |
 | `--parser` | int | `1` | ETE parser format |
 | `--taxon-mapper` | path | `None` | Optional taxon mapper file |
 

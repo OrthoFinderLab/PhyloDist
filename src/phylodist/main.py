@@ -6,6 +6,7 @@ import json
 
 from .tree_comparator import TreeComparator
 from .tree_structure import TreeStructure
+from .branch_distances import frobenius_distance
 from . import utils
 
 
@@ -66,6 +67,7 @@ class PhyloDist:
         return_type: str = "distance",
         normalise: bool = False,
         k: float = 1.0,
+        frobenius_type: str = "raw",
         tree1: Optional[TreeStructure] = None,
         tree2: Optional[TreeStructure] = None,
     ) -> utils.ScoreResult:
@@ -90,6 +92,10 @@ class PhyloDist:
         k
             Exponent parameter used by JRF.
 
+        frobenius_type
+            ``"raw"`` or ``"relative"``. For the relative form, tree2 is
+            the reference tree.
+
         tree1, tree2
             Optional trees to override stored ones.
         """
@@ -107,6 +113,24 @@ class PhyloDist:
 
         if not isinstance(t2, TreeStructure):
             raise TypeError("tree2 must be TreeStructure")
+
+        resolved_method, _ = utils.resolve_method_and_return_type(
+            method, return_type
+        )
+        if resolved_method == "frobenius":
+            if normalise:
+                raise ValueError(
+                    "normalise is not defined for Frobenius distance; use "
+                    "frobenius_type='relative' instead."
+                )
+            score = frobenius_distance(t1, t2, distance_type=frobenius_type)
+            return utils.ScoreResult(
+                score=score,
+                matched_pairs=[],
+                unmatched1=[],
+                unmatched2=[],
+                shared_taxa=t1.get_tree_taxa() & t2.get_tree_taxa(),
+            )
 
         if rooted is None:
             # Auto mode:
@@ -177,8 +201,16 @@ def parse_args(argv=None):
             "pid",
             "mci",
             "cid",
+            "frobenius",
         ],
         help="Comparison method"
+    )
+
+    parser.add_argument(
+        "--frobenius-type",
+        choices=["raw", "relative"],
+        default="raw",
+        help="Raw or tree2-relative Frobenius distance",
     )
 
     parser.add_argument(
@@ -315,6 +347,7 @@ def main(argv=None):
         normalise=args.normalise,
         return_type=args.return_type,
         k=args.k,
+        frobenius_type=args.frobenius_type,
     )
 
     if args.json:
@@ -326,6 +359,7 @@ def main(argv=None):
             "return_type": args.return_type,
             "normalise": args.normalise,
             "k": args.k,
+            "frobenius_type": args.frobenius_type,
             "tree1_rooted": args.tree1_rooted,
             "tree2_rooted": args.tree2_rooted,
             "compare_mode": args.compare_mode,
@@ -342,6 +376,7 @@ def main(argv=None):
         print(f"return_type: {args.return_type}")
         print(f"normalise: {args.normalise}")
         print(f"k: {args.k}")
+        print(f"frobenius_type: {args.frobenius_type}")
         print(f"tree1_rooted: {args.tree1_rooted}")
         print(f"tree2_rooted: {args.tree2_rooted}")
         print(f"compare_rooted: {compare_rooted}")
